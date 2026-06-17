@@ -24,12 +24,16 @@ console.log(`Found ${commandData.length} command(s).`);
 for (const guildId of guildIds) {
     console.log(`Registering commands for guild ${guildId}...`);
 
-    await rest.put(
+    const registeredCommands = await rest.put(
         Routes.applicationGuildCommands(process.env.CLIENT_ID, guildId),
         { body: commandData }
     );
 
     console.log(`Registered commands for guild ${guildId}.`);
+
+    for (const command of registeredCommands) {
+        console.log(`- /${command.name}`);
+    }
 }
 
 console.log('Done.');

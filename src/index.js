@@ -17,6 +17,10 @@ for (const command of commands) {
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   console.log(`Loaded ${client.commands.size} command(s).`);
+
+  for (const commandName of client.commands.keys()) {
+    console.log(`- /${commandName}`);
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
