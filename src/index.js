@@ -3,7 +3,7 @@ import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { loadCommands } from './lib/loadCommands.js';
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers,],
 });
 
 client.commands = new Collection();
@@ -14,18 +14,50 @@ for (const command of commands) {
   client.commands.set(command.data.name, command);
 }
 
-client.once(Events.ClientReady, (readyClient) => {
+client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
   console.log(`Loaded ${client.commands.size} command(s).`);
 
   for (const commandName of client.commands.keys()) {
     console.log(`- /${commandName}`);
   }
+
+  for (const command of client.commands.values()) {
+    if (typeof command.init === 'function') {
+      await command.init(client);
+    }
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
+  try {
+    if (interaction.isChatInputCommand()) {
+      await handleChatInputCommand(interaction);
+      return;
+    }
 
+    if (interaction.isModalSubmit()) {
+      await handleModalSubmit(interaction);
+      return;
+    }
+
+    if (interaction.isButton()) {
+      await handleButtonInteraction(interaction);
+      return;
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      await handleSelectMenuInteraction(interaction);
+      return;
+    }
+
+  } catch (error) {
+    console.error('Interaction error:', error);
+    await replyWithError(interaction);
+  }
+});
+
+async function handleChatInputCommand(interaction) {
   const command = client.commands.get(interaction.commandName);
 
   if (!command) {
@@ -33,22 +65,64 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  try {
-    await command.execute(interaction);
-  } catch (error) {
-    console.error(`Error while executing /${interaction.commandName}:`, error);
+  await command.execute(interaction);
+}
 
-    const message = {
-      content: 'Something went wrong while handling that command.',
-      ephemeral: true,
-    };
+async function handleModalSubmit(interaction) {
+  for (const command of client.commands.values()) {
+    if (typeof command.handleModalSubmit !== 'function') {
+      continue;
+    }
 
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(message);
-    } else {
-      await interaction.reply(message);
+    const handled = await command.handleModalSubmit(interaction);
+
+    if (handled) {
+      return;
     }
   }
-});
+}
+
+async function handleButtonInteraction(interaction) {
+  for (const command of client.commands.values()) {
+    if (typeof command.handleButtonInteraction !== 'function') {
+      continue;
+    }
+
+    const handled = await command.handleButtonInteraction(interaction);
+
+    if (handled) {
+      return;
+    }
+  }
+}
+
+async function replyWithError(interaction) {
+  const message = {
+    content: 'Something went wrong while handling that interaction.',
+    ephemeral: true,
+  };
+
+  if (interaction.replied || interaction.deferred) {
+    await interaction.followUp(message).catch(() => null);
+  } else {
+    await interaction.reply(message).catch(() => null);
+  }
+}
+
+async function handleSelectMenuInteraction(interaction) {
+  for (const command of client.commands.values()) {
+    if (typeof command.handleSelectMenuInteraction !== 'function') {
+      continue;
+    }
+
+    const handled = await command.handleSelectMenuInteraction(interaction);
+
+    if (handled) {
+      return;
+    }
+  }
+}
+
+
 
 client.login(process.env.DISCORD_TOKEN);
