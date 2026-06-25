@@ -16,6 +16,14 @@ const BONKS_FILE = path.join(
     'bonks.json'
 );
 
+const BONK_TIMEOUT_MS = 60_000;
+
+// Configurable special chances.
+// These are x out of 100.
+// Example: 5 = 5% chance.
+const LETHAL_BONK_CHANCE = 5;
+const COUNTER_BONK_CHANCE = 5;
+
 const DEFAULT_BONK_PROFILE = {
     templateFile: path.join(
         __dirname,
@@ -53,6 +61,80 @@ const DEFAULT_BONK_PROFILE = {
     },
 };
 
+const LETHAL_BONK_PROFILE = {
+    templateFile: path.join(
+        __dirname,
+        '..',
+        '..',
+        'assets',
+        'bonks',
+        'bonk-template-lethal.png'
+    ),
+    layout: {
+        leftName: {
+            centerX: 260,
+            centerY: 725,
+            maxWidth: 210,
+            maxFontSize: 34,
+            minFontSize: 16,
+            rotation: -0.04,
+        },
+        rightName: {
+            centerX: 900,
+            centerY: 965,
+            maxWidth: 240,
+            maxFontSize: 34,
+            minFontSize: 16,
+            rotation: 0.02,
+        },
+        reason: {
+            centerX: 625,
+            topY: 32,
+            maxWidth: 650,
+            maxFontSize: 34,
+            minFontSize: 16,
+            maxLines: 3,
+        },
+    },
+};
+
+const COUNTER_BONK_PROFILE = {
+    templateFile: path.join(
+        __dirname,
+        '..',
+        '..',
+        'assets',
+        'bonks',
+        'bonk-template-counter.png'
+    ),
+    layout: {
+        leftName: {
+            centerX: 270,
+            centerY: 820,
+            maxWidth: 230,
+            maxFontSize: 34,
+            minFontSize: 16,
+            rotation: -0.05,
+        },
+        rightName: {
+            centerX: 910,
+            centerY: 855,
+            maxWidth: 240,
+            maxFontSize: 34,
+            minFontSize: 16,
+            rotation: 0.03,
+        },
+        reason: {
+            centerX: 625,
+            topY: 34,
+            maxWidth: 650,
+            maxFontSize: 34,
+            minFontSize: 16,
+            maxLines: 3,
+        },
+    },
+};
+
 // Add special bonk profiles here.
 // chance = x out of 100.
 // Example: chance: 25 means 25/100 chance when that user uses /bonk.
@@ -71,7 +153,6 @@ const bonkerOverrides = [
             ),
             layout: {
                 leftName: {
-                    // Middle girl = invoker
                     centerX: 595,
                     centerY: 300,
                     maxWidth: 190,
@@ -80,7 +161,6 @@ const bonkerOverrides = [
                     rotation: -0.18,
                 },
                 rightName: {
-                    // Guy getting kicked = target
                     centerX: 930,
                     centerY: 275,
                     maxWidth: 210,
@@ -89,7 +169,6 @@ const bonkerOverrides = [
                     rotation: 0.12,
                 },
                 reason: {
-                    // Somewhere above the action
                     centerX: 700,
                     topY: 28,
                     maxWidth: 500,
@@ -114,7 +193,6 @@ const bonkerOverrides = [
             ),
             layout: {
                 leftName: {
-                    // Dog with baguette = invoker
                     centerX: 145,
                     centerY: 250,
                     maxWidth: 145,
@@ -123,7 +201,6 @@ const bonkerOverrides = [
                     rotation: -0.04,
                 },
                 rightName: {
-                    // Green victim = target
                     centerX: 445,
                     centerY: 280,
                     maxWidth: 120,
@@ -132,7 +209,6 @@ const bonkerOverrides = [
                     rotation: 0.04,
                 },
                 reason: {
-                    // Top white space
                     centerX: 260,
                     topY: 16,
                     maxWidth: 320,
@@ -142,7 +218,7 @@ const bonkerOverrides = [
                 },
             },
         },
-    }
+    },
 ];
 
 export const data = new SlashCommandBuilder()
@@ -188,13 +264,22 @@ export async function execute(interaction) {
         target.globalName ??
         target.username;
 
+    const specialBonk = getSpecialBonkEvent();
+
+    const bonkProfile = specialBonk
+        ? getSpecialBonkProfile(specialBonk)
+        : getBonkProfile(interaction.user.id);
+
     const bonks = await loadBonks();
-    bonks[target.id] = (bonks[target.id] ?? 0) + 1;
+
+    const countedUserId = specialBonk === 'counter'
+        ? interaction.user.id
+        : target.id;
+
+    bonks[countedUserId] = (bonks[countedUserId] ?? 0) + 1;
     await saveBonks(bonks);
 
-    const count = bonks[target.id];
-
-    const bonkProfile = getBonkProfile(interaction.user.id);
+    const count = bonks[countedUserId];
 
     const renderedImage = await renderBonkImage({
         templatePath: bonkProfile.templateFile,
@@ -208,12 +293,21 @@ export async function execute(interaction) {
         name: 'bonk.png',
     });
 
-    const content = [
-        `🔨 ${interaction.user} bonks ${target}!`,
-        reason ? `**Reason:** ${reason}` : null,
-        '',
-        `${target} has now been bonked **${count}** time${count === 1 ? '' : 's'}.`,
-    ].filter(Boolean).join('\n');
+    const timeoutResult = await applySpecialTimeout({
+        interaction,
+        targetMember,
+        specialBonk,
+        reason,
+    });
+
+    const content = createBonkMessage({
+        interaction,
+        target,
+        reason,
+        count,
+        specialBonk,
+        timeoutResult,
+    });
 
     const embed = new EmbedBuilder()
         .setImage('attachment://bonk.png');
@@ -226,6 +320,124 @@ export async function execute(interaction) {
             users: [interaction.user.id, target.id],
         },
     });
+}
+
+function getSpecialBonkEvent() {
+    const lethalChance = clampChance(LETHAL_BONK_CHANCE);
+    const counterChance = clampChance(COUNTER_BONK_CHANCE);
+    const totalChance = Math.min(100, lethalChance + counterChance);
+
+    if (totalChance <= 0) {
+        return null;
+    }
+
+    const roll = Math.floor(Math.random() * 100) + 1;
+
+    if (roll <= lethalChance) {
+        return 'lethal';
+    }
+
+    if (roll <= lethalChance + counterChance) {
+        return 'counter';
+    }
+
+    return null;
+}
+
+function getSpecialBonkProfile(specialBonk) {
+    if (specialBonk === 'lethal') {
+        return LETHAL_BONK_PROFILE;
+    }
+
+    if (specialBonk === 'counter') {
+        return COUNTER_BONK_PROFILE;
+    }
+
+    return DEFAULT_BONK_PROFILE;
+}
+
+async function applySpecialTimeout({ interaction, targetMember, specialBonk, reason }) {
+    if (specialBonk === 'lethal') {
+        return tryTimeoutMember({
+            member: targetMember,
+            timeoutReason: createTimeoutReason({
+                actor: interaction.user,
+                reason,
+                type: 'Lethal bonk',
+            }),
+            successMessage: `${targetMember?.user ?? 'The target'} was timed out for 60 seconds.`,
+            failMessage: 'I could not timeout the target. I may need **Moderate Members**, or my role may be too low.',
+        });
+    }
+
+    if (specialBonk === 'counter') {
+        return tryTimeoutMember({
+            member: interaction.member,
+            timeoutReason: createTimeoutReason({
+                actor: interaction.user,
+                reason,
+                type: 'Counter bonk',
+            }),
+            successMessage: `${interaction.user} was counter-bonked and timed out for 60 seconds.`,
+            failMessage: 'I could not timeout the bonker. I may need **Moderate Members**, or my role may be too low.',
+        });
+    }
+
+    return null;
+}
+
+async function tryTimeoutMember({ member, timeoutReason, successMessage, failMessage }) {
+    if (!member || typeof member.timeout !== 'function') {
+        return failMessage;
+    }
+
+    if (!member.moderatable) {
+        return failMessage;
+    }
+
+    try {
+        await member.timeout(BONK_TIMEOUT_MS, timeoutReason);
+        return successMessage;
+    } catch (error) {
+        console.error('Failed to apply bonk timeout:', error);
+        return failMessage;
+    }
+}
+
+function createTimeoutReason({ actor, reason, type }) {
+    return [
+        `${type} by ${actor.tag ?? actor.username}`,
+        reason ? `Reason: ${reason}` : null,
+    ].filter(Boolean).join(' | ').slice(0, 512);
+}
+
+function createBonkMessage({ interaction, target, reason, count, specialBonk, timeoutResult }) {
+    if (specialBonk === 'lethal') {
+        return [
+            `💀 ${interaction.user} lands a **LETHAL BONK** on ${target}!`,
+            reason ? `**Reason:** ${reason}` : null,
+            '',
+            `${target} has now been bonked **${count}** time${count === 1 ? '' : 's'}.`,
+            timeoutResult ? `⏱️ ${timeoutResult}` : null,
+        ].filter(Boolean).join('\n');
+    }
+
+    if (specialBonk === 'counter') {
+        return [
+            `🛡️ ${target} **brought a bigger bat against** ${interaction.user}'s bonk!`,
+            reason ? `**Original reason:** ${reason}` : null,
+            '',
+            `${interaction.user} has now been bonked **${count}** time${count === 1 ? '' : 's'}.`,
+            timeoutResult ? `⏱️ ${timeoutResult}` : null,
+        ].filter(Boolean).join('\n');
+    }
+
+    return [
+        `🔨 ${interaction.user} bonks ${target}!`,
+        reason ? `**Reason:** ${reason}` : null,
+        '',
+        `${target} has now been bonked **${count}** time${count === 1 ? '' : 's'}.`,
+    ].filter(Boolean).join('\n');
 }
 
 async function renderBonkImage({ templatePath, leftName, rightName, reason, layout }) {

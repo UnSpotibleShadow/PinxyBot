@@ -50,12 +50,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleSelectMenuInteraction(interaction);
       return;
     }
+    if (interaction.isAutocomplete()) {
+      await handleAutocompleteInteraction(interaction);
+      return;
+    }
 
   } catch (error) {
     console.error('Interaction error:', error);
     await replyWithError(interaction);
   }
 });
+
+async function handleAutocompleteInteraction(interaction) {
+  const command = client.commands.get(interaction.commandName);
+
+  if (!command || typeof command.handleAutocompleteInteraction !== 'function') {
+    await interaction.respond([]);
+    return;
+  }
+
+  await command.handleAutocompleteInteraction(interaction);
+}
 
 async function handleChatInputCommand(interaction) {
   const command = client.commands.get(interaction.commandName);

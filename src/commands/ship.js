@@ -29,6 +29,11 @@ const shipOverrides = [
         percentage: 10000,
         comment: 'Either of them is gonna spread their cheeks tonight!',
     },
+    {
+        ids: ['1264136522702131294' /*Odin*/, '596645684757790739'/*Datch*/],
+        percentage: 0,
+        comment: 'Fran would love this ship to go, but the ship sank during construction...',
+    },
 ];
 
 const fallbackComments = {
